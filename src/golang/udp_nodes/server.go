@@ -1,11 +1,15 @@
 package udp_nodes
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
 	"log"
 	"net"
+	"time"
 )
+
+
 
 func StartServer(serverId int, port int) {
 	addr, err := resolveUDPAddr("127.0.0.1", port)
@@ -21,21 +25,41 @@ func StartServer(serverId int, port int) {
 }
 
 func listenAndServe(serverId int, conn *net.UDPConn) {
-	defer conn.Close()
-	buffer := make([]byte, 1024) // Adjust buffer size as needed
+    defer conn.Close()
+    buffer := make([]byte, 1024)
 
-	log.Printf("UDP server listening on %s:%d\n", conn.LocalAddr().(*net.UDPAddr).IP, conn.LocalAddr().(*net.UDPAddr).Port)
+    log.Printf("UDP server %d listening on %s\n", serverId, conn.LocalAddr().String())
 
-	for {
-		n, addr, err := conn.ReadFromUDP(buffer)
-		if err != nil {
-			log.Printf("Error reading from UDP: %v\n", err)
-			continue // Continue listening even if there's an error
-		}
-		var sequence uint32 = binary.LittleEndian.Uint32(buffer[n-4 : n])
-		message := string(buffer[:n-4])
-		log.Printf("Server %d %d Received %d bytes from %s: %s\n", serverId, sequence, n, addr, message)
-	}
+    for {
+        n, addr, err := conn.ReadFromUDP(buffer)
+        if err != nil {
+            log.Printf("Error reading from UDP: %v\n", err)
+            continue
+        }
+
+        seqInfoSize := binary.Size(SeqInfo{})
+        seqInfoBytes := buffer[n-seqInfoSize : n]
+        var seqInfo SeqInfo
+        
+        binary.Read(bytes.NewReader(seqInfoBytes), binary.LittleEndian, &seqInfo)
+        
+        message := string(buffer[:n-seqInfoSize])
+        currentTime := time.Now().UnixNano()
+        latency := currentTime - int64(seqInfo.Timestamp)
+        
+        log.Printf("Server %d Received from %s:\n"+
+            "\tSequence: %d\n"+
+            "\tTimestamp: %d (current: %d)\n"+
+            "\tLatency: %dns\n"+
+            "\tMessage: %s\n", 
+            serverId, 
+            addr,
+            seqInfo.Sequence,
+            seqInfo.Timestamp,
+            currentTime,
+            latency,
+            message)
+    }
 }
 
 func createUDPListener(udpAddr *net.UDPAddr) (*net.UDPConn, error) {
