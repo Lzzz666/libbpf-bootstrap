@@ -40,3 +40,8 @@ cd src/c
 make tc
 sudo ./tc lo
 ```
+
+Get log
+```
+sudo cat /sys/kernel/debug/tracing/trace_pipe
+```
