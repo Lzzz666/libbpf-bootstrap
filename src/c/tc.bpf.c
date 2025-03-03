@@ -32,23 +32,23 @@ static __always_inline struct hdr try_parse_udp(void *data, void *data_end);
 uint16_t server_ports[SERVER_COUNT] = { 7073, 8073, 9073, 10073 };
 uint16_t redirect_port = 7072;
 //uint32_t sequencer_addr = (192 << 24) | (168 << 16) | (50 << 8) | 230;
-uint32_t redirect_addr = (192 << 24) | (168 << 16) | (50 << 8) | 182;
+uint32_t redirect_addr = (127 << 24) | (0 << 16) | (0 << 8) | 1;
 uint32_t server_ips[SERVER_COUNT] = {
-	(192 << 24) | (168 << 16) | (50 << 8) | 224, (192 << 24) | (168 << 16) | (50 << 8) | 213,
-	(192 << 24) | (168 << 16) | (50 << 8) | 239, (192 << 24) | (168 << 16) | (50 << 8) | 219,
+    (127 << 24) | (0 << 16) | (0 << 8) | 1,
+    (127 << 24) | (0 << 16) | (0 << 8) | 1,
+    (127 << 24) | (0 << 16) | (0 << 8) | 1,
+    (127 << 24) | (0 << 16) | (0 << 8) | 1,
 };
 
+// loopback 接口的 MAC 地址總是 00:00:00:00:00:00
+unsigned char redirect_mac[6] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+unsigned char server_macs[SERVER_COUNT][6] = {
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+    { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
+};
 
-unsigned char redirect_mac[6] = { 0x5c, 0x92, 0x5e, 0xd7, 0x6a, 0xbd };
-//9c:2d:cd:3f:67:a4 => 192.168.50.224 => 7073
-//9c:2d:cd:48:b1:04 => 192.168.50.213 => 8073
-//74:d4:dd:2c:b1:79 => 192.168.50.230 => 9073
-//28:16:ad:ec:06:a8 => 192.168.50.239 => 10073
-//04:6c:59:65:70:20 => 192.168.50.219 => 11073
-unsigned char server_macs[SERVER_COUNT][6] = { { 0x9c, 0x2d, 0xcd, 0x3f, 0x67, 0xa4 },
-					       { 0x9c, 0x2d, 0xcd, 0x48, 0xb1, 0x04 },
-					       { 0x28, 0x16, 0xad, 0xec, 0x06, 0xa8 },
-					       { 0x04, 0x6c, 0x59, 0x65, 0x70, 0x20 } };
 
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
@@ -102,6 +102,11 @@ static __always_inline struct ip_flags extract_flags(uint16_t frag_off)
 	return (struct ip_flags){ reserved, df, mf, offset };
 }
 
+struct seq_info {
+    u32 sequence;
+    u64 timestamp;
+};
+
 SEC("tc")
 int tc_ingress(struct __sk_buff *ctx)
 {
@@ -146,10 +151,20 @@ int tc_ingress(struct __sk_buff *ctx)
 			bpf_map_update_elem(&counter_map, &counterKey, &initial_value, BPF_ANY);
 		}
 
-		if(count != NULL && ctx->data_end - ctx->data >= sizeof(*count)) {
-			u32 seq = *count;
-			int ret = bpf_skb_store_bytes(ctx, ctx->data_end - ctx->data - sizeof(seq), &seq,
-					      sizeof(seq), 0);
+		if(count != NULL) {
+			struct seq_info info;
+			info.sequence = *count;
+			info.timestamp = bpf_ktime_get_ns();
+			bpf_printk("seq_info: %u ", info.sequence);
+			bpf_printk("timestamp: %llu\n", info.timestamp);
+			u32 pkt_len = (u32)(ctx->data_end - ctx->data);
+			u32 pos= pkt_len - sizeof(struct seq_info);
+			if (pos > 0) {
+				int ret = bpf_skb_store_bytes(ctx, pos, &info, sizeof(struct seq_info), 0);
+				if (ret < 0) {
+					bpf_printk("Failed to store seq_info: %d\n", ret);
+				}
+			}
 		}
 	}
 
