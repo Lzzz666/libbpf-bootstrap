@@ -8,6 +8,8 @@ import (
 	"time"
 )
 
+
+
 var useEbpf = false
 
 func StartClient() {
@@ -27,8 +29,14 @@ func StartClient() {
 	defer conn.Close()
 	fmt.Printf("Connected to UDP server at %s\n", serverAddr.String())
 	for {
+		// 創建消息，預留 SeqInfo 的空間
+		msg := fmt.Sprintf("Hi %d from client!!", rand.Int())
+		// 確保消息長度是固定的，並且留出足夠空間給 SeqInfo
+		msgWithPadding := make([]byte, len(msg)+16)  // 16 = sizeof(SeqInfo)
+		copy(msgWithPadding, []byte(msg))
+
 		// Send the message to the server
-		_, err := conn.Write([]byte(fmt.Sprintf("Hi %d from client!!    ", rand.Int())))
+		_, err := conn.Write(msgWithPadding)
 		if err != nil {
 			fmt.Printf("Error sending data: %v\n", err)
 			continue
