@@ -7,7 +7,7 @@
 
 #define ETH_P_IP    0x0800
 
-#define IP_P_TCP    6
+#define IP_P_TCP    6	//protocol number
 #define IP_P_UDP    17
 
 #define ETH_SIZE    sizeof(struct ethhdr)
@@ -49,7 +49,7 @@ unsigned char server_macs[SERVER_COUNT][6] = {
     { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 },
 };
 
-
+/* BPF map */
 struct {
 	__uint(type, BPF_MAP_TYPE_ARRAY);
 	__uint(max_entries, 1);
@@ -63,15 +63,43 @@ extern int bpf_dynptr_from_skb(struct sk_buff *skb, __u64 flags,
 extern void *bpf_dynptr_slice(const struct bpf_dynptr *ptr, uint32_t offset, void *buffer,
 			      uint32_t buffer__sz) __ksym;
 
-#define IP_MF	  0x2000
-#define IP_OFFSET 0x1FFF
+#define IP_MF     0x2000  // More Fragments（MF）標誌位
+#define IP_OFFSET 0x1FFF  // Fragment Offset（片段偏移量）
+
+/* 
++-------------------+-----------------+-----------------+
+|   Ethernet Header (14 bytes)                          |
++-------------------+-----------------+-----------------+
+|   IP Header (20 bytes)                                |
++-------------------+-----------------+-----------------+
+|   UDP Header (8 bytes)                                |
++-------------------+-----------------+-----------------+
+|   UDP Payload (可變長度)                               |
++-------------------+-----------------+-----------------+
+
+UDP
++--------+--------+--------+---------+
+|  Source Port    |  Destination Port| (4 bytes)
++--------+--------+--------+---------+
+|  Length (Total) |  Checksum        | (4 bytes)
++--------+--------+--------+---------+
+|           Data (Payload)           | (可變長度)
++------------------------------------+
+
+*/
 
     static bool is_frag_v4(struct iphdr *iph)
 {
 	int offset;
 	int flags;
-
-	offset = bpf_ntohs(iph->frag_off);
+	/* 
+	 @ Network Byte Order（網路位元序）to Host Byte Order（主機位元序）。
+	 - 網路位元序（Big-Endian）：高位（MSB）在前，低位（LSB）在後。
+	 - 主機位元序（Little-Endian or Big-Endian）：依 CPU 架構不同
+	 - Intel x86/x86_64：Little-Endian
+	 - ARM / PowerPC / 部分 RISC-V：可能是 Big-Endian 或 Little-Endian
+	*/
+	offset = bpf_ntohs(iph->frag_off);  
 	flags = offset & ~IP_OFFSET;
 	offset &= IP_OFFSET;
 	offset <<= 3;
@@ -79,8 +107,22 @@ extern void *bpf_dynptr_slice(const struct bpf_dynptr *ptr, uint32_t offset, voi
 	return (flags & IP_MF) || offset;
 }
 
+
+/* 
+	16-bit `frag_off` 欄位：
+	+-+-+-+-+-+-+-+-+-+-+-+-+
+	|R|D|M|      Offset     |
+	+-+-+-+-+-+-+-+-+-+-+-+-+
+	 ↑ ↑ ↑    ↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑
+	 | | |    Fragment Offset（13-bit）
+	 | | More Fragments (MF, 1-bit)
+	 | Don't Fragment (DF, 1-bit)
+	 Reserved (0, 1-bit)
+
+*/
+
 struct ip_flags {
-	uint8_t reserved;
+	uint8_t reserved;	// uint8_t 8bit 無號整數
 	uint8_t df;
 	uint8_t mf;
 	uint16_t offset;
@@ -156,9 +198,12 @@ int tc_ingress(struct __sk_buff *ctx)
 			info.sequence = *count;
 			info.timestamp = bpf_ktime_get_ns();
 			bpf_printk("seq_info: %u ", info.sequence);
-			bpf_printk("timestamp: %llu\n", info.timestamp);
+			bpf_printk("timestamp: %llu", info.timestamp);
+			bpf_printk("ctx->data_end %u",ctx->data_end);
+			bpf_printk("ctx->data %u\n",ctx->data);
 			u32 pkt_len = (u32)(ctx->data_end - ctx->data);
-			u32 pos= pkt_len - sizeof(struct seq_info);
+			u32 pos = pkt_len - sizeof(struct seq_info);
+			
 			if (pos > 0) {
 				int ret = bpf_skb_store_bytes(ctx, pos, &info, sizeof(struct seq_info), 0);
 				if (ret < 0) {
